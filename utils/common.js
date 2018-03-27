@@ -1,338 +1,221 @@
 import APP_CONFIG from '../config/config.js';
-import ERROR from '../utils/error.js';
-import PARAM_VALIDATE from '../utils/param_validate.js'
+// import ERROR from '../utils/error.js';
 
 const DEBUG_FLAG = APP_CONFIG.DEBUG_FLAG;
 const IS_WECHAT = APP_CONFIG.IS_WECHAT;
 
-export const validate = (obj, keys) => {
-  for (let key in obj) {
-    if (obj.hasOwnProperty(key)) {
-      if (keys.hasOwnProperty(key)) {
-        if (typeof obj[key] !== keys[key])
-          throw new Error(format(ERROR.INVALID_TYPE, [key, typeof obj[key], keys[key]]));
-      } else {
-        let errorStr = "未知的属性, " + key + ". 被验证的属性有:";
-        for (var validKey in keys)
-          if (keys.hasOwnProperty(validKey))
-            errorStr = errorStr + " " + validKey;
-        throw new Error(errorStr);
+const MAP = {
+  login: 'getAuthCode',
+  request: 'httpRequest',
+  setNavigationBarTitle: 'setNavigationBar',
+  setNavigationBarColor: 'setNavigationBar',
+  requestPayment: 'tradePay',
+};
+
+export const callApi = (name, options, addtional) => {
+  if (DEBUG_FLAG) {
+    console.group(`调用了${name}`);
+    console.log(
+      `传入了参数${JSON.stringify(options)},${addtional ? addtional : ''}`);
+    console.log(options);
+  }
+  
+  if (typeof options === 'object') {
+    const success = options.success;
+    const fail = options.fail;
+    const complete = options.complete;
+    options.success = success ? (data) => {
+      if (DEBUG_FLAG) {
+        console.log(data);
+        console.groupEnd();
       }
+      success(data);
+    } : null;
+    
+    options.fail = fail ? res => {
+      if (DEBUG_FLAG) {
+        console.groupEnd();
+      }
+      fail(res);
+    } : null;
+    
+    options.complete = complete ? res => {
+      if (DEBUG_FLAG) {
+        console.groupEnd();
+      }
+      complete(res);
+    } : null;
+  }
+  
+  switch (name) {
+    case 'login':
+      options = login(options);
+      break;
+    case 'showActionSheet':
+      options = showActionSheet(options);
+      break;
+    case 'showToast':
+      options = showToast(options);
+      break;
+    case 'showLoading':
+      options = showLoading(options);
+      break;
+    case 'request':
+      options = request(options);
+      break;
+    case 'makePhoneCall':
+      options = makePhoneCall(options);
+      break;
+    case 'previewImage':
+      options = previewImage(options);
+      break;
+    case 'removeStorageSync':
+      options = removeStorageSync(options);
+      break;
+    // case 'getSystemInfo':
+    //   options = getSystemInfo(options);
+    //   break;
+    case 'requestPayment':
+      options = requestPayment(options);
+      break;
+    case 'setStorageSync':
+      return setStorageSync(options, addtional);
+    case 'showModal':
+      return showModal(options);
+    case 'getStorageSync':
+      return getStorageSync(options);
+    // case 'getSystemInfoSync':
+    //   return getSystemInfoSync(my.getSystemInfoSync());
+    default:
+      return 0;
+  }
+  
+  if (IS_WECHAT) {
+    wx[name](options);
+  } else {
+    let result = MAP[name];
+    let apiName = result ? result : name;
+    my[apiName](options);
+  }
+  
+  console.groupEnd();
+  return 0;
+  
+};
+
+const paramsMap = (options, maps = {}) => {
+  let params = {};
+  
+  for (let key in options) {
+    let myKey = maps.hasOwnProperty(key) ? maps[key] : key;
+    params[myKey] = options[key];
+  }
+  
+  return params;
+};
+
+const login = options => {
+  if (!IS_WECHAT) {
+    options.scopes = 'auth_user';
+  }
+  return options;
+};
+
+const showActionSheet = options => IS_WECHAT ? options : paramsMap(options, {
+  itemList: 'items',
+});
+
+const requestPayment = options => IS_WECHAT ? options : paramsMap(options, {
+  alipay_trade_body: 'orderStr',
+});
+
+const request = options => IS_WECHAT ? options : paramsMap(options, {
+  header: 'headers',
+});
+
+const makePhoneCall = options => IS_WECHAT ? options : paramsMap(options, {
+  phoneNumber: 'number',
+});
+
+const removeStorageSync = options => IS_WECHAT ? options : { key: options };
+
+const showLoading = options => IS_WECHAT ? options : paramsMap(options, {
+  title: 'content',
+});
+
+const previewImage = options => {
+  if (IS_WECHAT) {
+    return options;
+  } else {
+    let params = paramsMap(options);
+    let current = params.current;
+    
+    if (current) {
+      current = options.urls.indexOf(current);
     }
+    
+    if (current === -1 || !current) {
+      current = 0;
+    }
+    
+    params.current = current;
+    
+    return params;
   }
 };
 
-export const format = (error, substitutions) => {
-  let text = error.text;
-  console.log(substitutions);
-  if (substitutions) {
-    let field;
-    let start;
-    for (let i = 0; i < substitutions.length; i++) {
-      field = "{" + i + "}";
-      start = text.indexOf(field);
-      if (start > 0) {
-        let part1 = text.substring(0, start);
-        let part2 = text.substring(start + field.length);
-        text = part1 + substitutions[i] + part2;
-      }
-    }
+const setStorageSync = (options, addtional) => {
+  if (IS_WECHAT) {
+    wx.setStorageSync(options, addtional);
+  } else {
+    my.setStorageSync(options);
   }
-  return text;
+  console.groupEnd();
 };
 
-export const request = options => {
-
-  validate(options, PARAM_VALIDATE.XCX_REQUEST);
-
-  if (DEBUG_FLAG) {
-    console.group('网络请求');
-    console.time('网络请求耗时');
-    console.log('传入了参数');
-    console.log(options);
+/**
+ * wx模态弹窗不同的参数对应到支付宝confirm和alert API
+ */
+function showModal(options) {
+  let params = paramsMap(options);
+  let showCancel = params.showCancel;
+  
+  if (typeof showCancel === 'undefined') {
+    showCancel = true;
   }
-  const success = options.success;
-  const fail = options.fail;
-  const complete = options.complete;
-  options.success = success ? (data, statusCode, header) => {
-    if (DEBUG_FLAG) {
-      console.log('请求成功');
-      console.log('请求到的信息')
-      console.log(data)
-      console.timeEnd('网络请求耗时');
-      console.groupEnd('网络请求');
-    };
-    success(data, statusCode, header);
-  } : null;
-
-  options.fail = fail ? res => {
-    if (DEBUG_FLAG) {
-      console.log('请求失败');
-      console.timeEnd('网络请求耗时');
-      console.groupEnd('网络请求');
-    };
-    fail(res);
-  } : null;
-
-  options.complete = complete ? res => {
-    if (DEBUG_FLAG) {
-      console.log('请求完成');
-      console.timeEnd('网络请求耗时');
-      console.groupEnd('网络请求');
+  
+  if (!IS_WECHAT) {
+    // 确认框
+    if (showCancel) {
+      params.confirmButtonText = params.confirmText;
+      params.cancelButtonText = params.cancelText;
+    } else {
+      // 提醒框
+      params.buttonText = params.confirmText;
     }
-    complete(res);
-  } : null;
-
-  if (IS_WECHAT) {
-    wx.request(options);
+    
+    my[showCancel ? 'confirm' : 'alert'](params);
   } else {
-    options.headers = options.header;
-    my.httpRequest(options);
+    wx.showModal(options);
   }
 }
 
-export const setStorage = options => {
-  validate(options, PARAM_VALIDATE.XCX_SET_STORAGE);
-
-  if (DEBUG_FLAG) {
-    console.group('设置缓存');
-    console.log('传入了参数');
-    console.log(options);
-  }
-
-  const success = options.success;
-  const fail = options.fail;
-  const complete = options.complete;
-  options.success = success ? (data) => {
-    if (DEBUG_FLAG) {
-      console.groupEnd('设置缓存');
-    };
-    success(data);
-  } : null;
-
-  options.fail = fail ? res => {
-    if (DEBUG_FLAG) {
-      console.groupEnd('设置缓存');
-    };
-    fail(res);
-  } : null;
-
-  options.complete = complete ? res => {
-    if (DEBUG_FLAG) {
-      console.groupEnd('设置缓存');
-    }
-    complete(res);
-  } : null;
-
+/**
+ * 参数{icon: 'loading'} 无法成功映射，建议不要使用
+ */
+const showToast = options => {
   if (IS_WECHAT) {
-    wx.setStorage(options);
+    return options;
   } else {
-    my.setStorage(options);
+    return paramsMap(options, {
+      title: 'content',
+      icon: 'type',
+    });
   }
-}
+};
 
-export const setStorageSync = (key, data) => {
-
-  if (DEBUG_FLAG) {
-    console.group('同步设置缓存');
-    console.log('传入了参数');
-    console.log(options);
-  }
-
-  if (IS_WECHAT) {
-    return wx.setStorageSync(key, data);
-  } else {
-    return my.setStorageSync(key, data);
-  }
-
-  console.group('同步设置缓存');
-}
-
-export const getStorage = options => {
-  validate(options, PARAM_VALIDATE.XCX_GET_STORAGE);
-
-  if (DEBUG_FLAG) {
-    console.group('取出缓存');
-    console.log('传入了参数');
-    console.log(options);
-  }
-
-  const success = options.success;
-  const fail = options.fail;
-  const complete = options.complete;
-  options.success = success ? (data) => {
-    if (DEBUG_FLAG) {
-      console.groupEnd('取出缓存');
-    };
-    success(data);
-  } : null;
-
-  options.fail = fail ? res => {
-    if (DEBUG_FLAG) {
-      console.groupEnd('取出缓存');
-    };
-    fail(res);
-  } : null;
-
-  options.complete = complete ? res => {
-    if (DEBUG_FLAG) {
-      console.groupEnd('取出缓存');
-    }
-    complete(res);
-  } : null;
-
-  if (IS_WECHAT) {
-    wx.setStorage(options);
-  } else {
-    my.setStorage(options);
-  }
-
-}
-
-export const getStorageSync = key => {
-  if (DEBUG_FLAG) {
-    console.group('同步取出缓存');
-    console.log('传入了参数');
-    console.log(key);
-  }
-
-  if (IS_WECHAT) {
-    return wx.getStorage(key);
-  } else {
-    return my.getStorage(key);
-  }
-  console.groupEnd('同步取出缓存');
-}
-
-export const removeStorage = options => {
-  validate(options, PARAM_VALIDATE.XCX_REMOVE_STORAGE);
-
-  if (DEBUG_FLAG) {
-    console.group('移除缓存');
-    console.log('传入了参数');
-    console.log(options);
-  }
-
-  const success = options.success;
-  const fail = options.fail;
-  const complete = options.complete;
-  options.success = success ? (data) => {
-    if (DEBUG_FLAG) {
-      console.groupEnd('移除缓存');
-    };
-    success(data);
-  } : null;
-
-  options.fail = fail ? res => {
-    if (DEBUG_FLAG) {
-      console.groupEnd('移除缓存');
-    };
-    fail(res);
-  } : null;
-
-  options.complete = complete ? res => {
-    if (DEBUG_FLAG) {
-      console.groupEnd('移除缓存');
-    }
-    complete(res);
-  } : null;
-
-  if (IS_WECHAT) {
-    wx.removeStorage(options);
-  } else {
-    my.removeStorage(options);
-  }
-
-}
-
-export const removeStorageSync = key => {
-  if (DEBUG_FLAG) {
-    console.group('同步移除缓存');
-    console.log('传入了参数');
-    console.log(key);
-  }
-
-  if (IS_WECHAT) {
-    wx.removeStorageSync(options);
-  } else {
-    my.removeStorageSync(options);
-  }
-
-  if (DEBUG_FLAG) console.groupEnd('同步移除缓存');
-}
-
-export const clearStorage = () => {
-  if (DEBUG_FLAG) console.log('%c清空缓存', 'font-size:50px;color:blue');
-
-  if (IS_WECHAT) {
-    wx.clearStorage();
-  } else {
-    my.clearStorage();
-  }
-}
-
-export const getStorageInfo = options => {
-  validate(options, PARAM_VALIDATE.XCX_GET_STORAGE_INFO);
-
-  if (DEBUG_FLAG) {
-    console.group('获取全部缓存');
-    console.log('传入了参数');
-    console.log(options);
-  }
-
-  const success = options.success;
-  const fail = options.fail;
-  const complete = options.complete;
-  options.success = success ? (data) => {
-    if (DEBUG_FLAG) {
-      console.log('获取到的数据是');
-      console.log(data);
-      console.groupEnd('获取全部缓存');
-    };
-    success(data);
-  } : null;
-
-  options.fail = fail ? res => {
-    if (DEBUG_FLAG) {
-      console.groupEnd('获取全部缓存');
-    };
-    fail(res);
-  } : null;
-
-  options.complete = complete ? res => {
-    if (DEBUG_FLAG) {
-      console.groupEnd('获取全部缓存');
-    }
-    complete(res);
-  } : null;
-
-  if (IS_WECHAT) {
-    wx.getStorageInfo(options);
-  } else {
-    my.getStorageInfo(options);
-  }
-
-}
-
-export const getStorageInfoSync = () => {
-  if (DEBUG_FLAG) console.group('同步获取全部缓存');
-
-  if (IS_WECHAT) {
-    wx.getStorageInfo(options);
-  } else {
-    my.getStorageInfo(options);
-  }
-
-  if (DEBUG_FLAG) console.groupEnd('同步获取全部缓存');
-}
-
-
-export const ax = {
-  request: request,
-  setStorage: setStorage,
-  setStorageSync: setStorageSync,
-  getStorage: getStorage,
-  getStorageSync: getStorageSync,
-  getStorageInfo: getStorageInfo,
-  getStorageInfoSync: getStorageInfoSync,
-}
+const getStorageSync = options => IS_WECHAT
+  ? wx.getStorageSync(options)
+  : my.getStorageSync({
+    options,
+  }).data;
